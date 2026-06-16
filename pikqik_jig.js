@@ -24,9 +24,17 @@
             sTimeMin:           "05:30 pm",
             sTimeMax:           "11:40 pm",
 
+            sScanTimeMin:       "05:00 am",
+            sScanTimeMax:       "10:00 pm",
+            minutesIntervalWarn: 10,
+            labelsToBeware:     ['Watch Out'],
+
             /* Remaining config */
             get minutesMin() {return convertTimeToMinutes(this.sTimeMin)},
             get minutesMax() {return convertTimeToMinutes(this.sTimeMax)},
+
+            get minutesScanMin() {return convertTimeToMinutes(this.sScanTimeMin)},
+            get minutesScanMax() {return convertTimeToMinutes(this.sScanTimeMax)},
 
             dom: {
                 tableName:      'div.table-name',
@@ -38,11 +46,18 @@
                 rowLock:        'div.row-lock',
                 rowPickBtn:     'button.row-pick-btn',
 
+                rowLabel:       'div.row-label',
                 rowTypeRegex:   /^row-type/
-            }
+            },
+            hintsByType: {
+                'row-type1':    'Off-peak',
+                'row-type2':    'Peak'
+            },
+            defaultHint:        'NotKnown'
         };
         Object.freeze(cfg);
         Object.freeze(cfg.dom);
+        Object.freeze(cfg.hintsByType);
 
         /* IIFE closure to remember msStart.
            cfg.logLabel must be assigned above! */
@@ -107,7 +122,6 @@
         }
 
         function pickRow() {
-            monolog(`Config: ${JSON.stringify(cfg, null, 2)}`);
             const page = {
                 name: document.querySelector(cfg.dom.tableName).textContent.trim(),
                 date: document.querySelector(cfg.dom.tableDate).textContent.trim()
@@ -137,8 +151,117 @@
             }
         }
 
+        /* Class ScanRow: constructor */
+        function ScanRow(rowNode) {
+            this.sTimeSlot = rowNode.querySelector(cfg.dom.rowTime).textContent.trim();
+            this.minutesTimeSlot = convertTimeToMinutes(this.sTimeSlot);
+
+            this.info = {};
+            const tokens = Array.from(rowNode.classList).filter(tok => tok.match(cfg.dom.rowTypeRegex));
+            this.info.type = tokens.join();
+            this.info.note = "";
+        }
+
+        function scanRowTypes() {
+            let prevRow = { /* Dummy row to compare the next row against */
+                sTimeSlot:          cfg.sScanTimeMin,
+                minutesTimeSlot:    cfg.minutesScanMin,
+                info: {
+                    type:           "DummyType",
+                    note:           ""
+                }
+            };
+            const rowTypes = [];
+            const timeGaps = [];
+            const rowNodes = document.querySelectorAll(cfg.dom.tableRows);
+            let isLastRowPushed = false;
+            for (const rowNode of rowNodes) {
+                const row = new ScanRow(rowNode);
+                if (row.minutesTimeSlot < cfg.minutesScanMin) {
+                    continue;
+                }
+                if (row.info.type != prevRow.info.type) {
+                    rowTypes.push(row);
+                }
+                if (row.minutesTimeSlot > (prevRow.minutesTimeSlot + cfg.minutesIntervalWarn) &&
+                    prevRow.info.type != "DummyType" ) {
+                    timeGaps.push( [prevRow, row] );
+                }
+                if (row.minutesTimeSlot > cfg.minutesScanMax) {
+                    row.info.note = "Next row past scan-time-max";
+                    rowTypes.push(row);
+                    isLastRowPushed = true;
+                    break;
+                }
+                prevRow = row;
+            }
+            if (!isLastRowPushed && rowTypes.length > 0 && prevRow !== rowTypes[-1]) {
+                    prevRow.info.note = "Last row";
+                    rowTypes.push(prevRow);
+            }
+            showScanResults(rowTypes, timeGaps);
+        }
+
+        function showScanResults(rowTypes, timeGaps) {
+            monolog("START OF EACH TYPE:");
+            const hints = new DefaultDict(cfg.hintsByType, cfg.defaultHint);
+            for (const row of rowTypes) {
+                const hint = hints.get(row.info.type);
+                monolog(`|${row.sTimeSlot} (${row.minutesTimeSlot})|${row.info.type}|${hint}|${row.info.note}`);
+            }
+            if (timeGaps.length > 0) {
+                monolog("TIME GAPS BETWEEN ROWS:");
+                for (const rows of timeGaps) {
+                    const [prev, row] = rows;
+                    const minutesGap = row.minutesTimeSlot - prev.minutesTimeSlot;
+                    monolog(`|GAP: ${minutesGap} minutes|${prev.sTimeSlot} (${prev.info.type})|` +
+                        `${row.sTimeSlot} (${row.info.type})`);
+                }
+            }
+            showLabelWarning();
+        }
+
+        function showLabelWarning() {
+            if (cfg.labelsToBeware.length == 0) {
+                return;
+            }
+            const objLabelsTB = cfg.labelsToBeware.map(lbl => ({
+                label:  lbl,
+                re:     new RegExp('^' + lbl + '\\s.*')
+            }));
+            const domLabelNodes = document.querySelectorAll(cfg.dom.rowLabel);
+            /* monolog(`Number of labels: ${domLabelNodes.length}`); */
+            for (const labelNode of domLabelNodes) {
+                const nodeText = labelNode.textContent.trim();
+                for (const ol of objLabelsTB) {
+                    if (ol.re.test( nodeText )) {
+                        monolog(`BEWARE: '${ol.label}' found!`);
+                    }
+                }
+            }
+        }
+
+        /* Class DefaultDict: constructor */
+        function DefaultDict(obj, defaultValue=null) {
+            this.obj = obj;
+            this.defaultValue = defaultValue;
+        }
+
+        /* Class DefaultDict: instance method */
+        DefaultDict.prototype.get = function (key) {
+            if ( Object.keys(this.obj).includes(key) ) {
+                return this.obj[key];
+            }
+            return this.defaultValue;
+        };
+
         /* Main */
         monolog("START");
+        const sectionBreak = '='.repeat(30);
+        monolog(`Config: ${JSON.stringify(cfg, null, 2)}`);
+        scanRowTypes();
+
+        monolog(sectionBreak);
         pickRow();
         monolog("END");
 

@@ -22,12 +22,17 @@
             freePlacesMin:      1,
             isShow0FreePlaces:  false,
             sTimeMin:           "05:30 pm",
-            sTimeMax:           "11:40 pm",
+            sTimeMax:           "09:15 pm",
 
             sScanTimeMin:       "05:00 am",
             sScanTimeMax:       "10:00 pm",
             minutesIntervalWarn: 10,
-            labelsToBeware:     ['Watch Out'],
+
+            watchList:             [
+                {label: 'Be Aware',     willStopPick: false},
+                {label: 'Watch Out',    willStopPick: true}
+            ],
+            okTypes: ['row-type1'],
 
             /* Remaining config */
             get minutesMin() {return convertTimeToMinutes(this.sTimeMin)},
@@ -35,6 +40,9 @@
 
             get minutesScanMin() {return convertTimeToMinutes(this.sScanTimeMin)},
             get minutesScanMax() {return convertTimeToMinutes(this.sScanTimeMax)},
+
+            msStart:            Date.now(),
+            get msStartString() {return new Date(this.msStart).toLocaleString()},
 
             dom: {
                 tableName:      'div.table-name',
@@ -59,15 +67,11 @@
         Object.freeze(cfg.dom);
         Object.freeze(cfg.hintsByType);
 
-        /* IIFE closure to remember msStart.
-           cfg.logLabel must be assigned above! */
-        const monolog = (function () {
-            const msStart = Date.now();
-            return function (msg) {
-                const msElapsed = Date.now() - msStart;
-                console.log(`${cfg.logLabel}(${msElapsed}ms) ${msg}`);
-            }
-        })();
+        /* cfg.msStart & cfg.logLabel must be assigned above! */
+        function monolog(msg) {
+            const msElapsed = Date.now() - cfg.msStart;
+            console.log(`${cfg.logLabel}(${msElapsed}ms) ${msg}`);
+        }
 
         /* Class Row: constructor */
         function Row(rowNode) {
@@ -76,13 +80,16 @@
 
             if (this.minutesTimeSlot >= cfg.minutesMin && this.minutesTimeSlot <= cfg.minutesMax) {
                 this.info = {};
-                this.info.numFreePlaces = rowNode.querySelectorAll(cfg.dom.rowFreePlaces).length;
-                this.info.hasLock = rowNode.querySelector(cfg.dom.rowLock).textContent.trim().length != 0;
-                this.info.willPick = this.info.numFreePlaces >= cfg.freePlacesMin && !this.info.hasLock;
-                this.info.button = rowNode.querySelector(cfg.dom.rowPickBtn);
-
                 const tokens = Array.from(rowNode.classList).filter(tok => tok.match(cfg.dom.rowTypeRegex));
                 this.info.type = tokens.join();
+
+                this.info.numFreePlaces = rowNode.querySelectorAll(cfg.dom.rowFreePlaces).length;
+                this.info.hasLock = rowNode.querySelector(cfg.dom.rowLock).textContent.trim().length != 0;
+
+                const okFreePlaces = this.info.numFreePlaces >= cfg.freePlacesMin;
+                const okType = cfg.okTypes.includes(this.info.type);
+                this.info.willPick = okFreePlaces && okType && !this.info.hasLock;
+                this.info.button = rowNode.querySelector(cfg.dom.rowPickBtn);
 
             } else {
                 this.info = null;
@@ -97,7 +104,8 @@
         /* Class Row: instance method */
         Row.prototype.show = function (wasPicked) {
             if (!this.info) {
-                monolog(`${this.sTimeSlot} (${this.minutesTimeSlot})|*** row.info is NULL`)
+                monolog(`${this.sTimeSlot} (${this.minutesTimeSlot})|*** row.info is NULL`);
+                return;
             }
             const sLocked = this.info.hasLock ? "Lock" : "";
             const sPick = (this.info.willPick && !wasPicked) ? `PICK: ${this.info.button.id}` : "";
@@ -121,7 +129,7 @@
             return (hours * 60) + minutes;
         }
 
-        function pickRow() {
+        function pickRow(wlScanner) {
             const page = {
                 name: document.querySelector(cfg.dom.tableName).textContent.trim(),
                 date: document.querySelector(cfg.dom.tableDate).textContent.trim()
@@ -143,7 +151,7 @@
                     if (row.info.willPick && !wasPicked) {
                         row.info.button.scrollIntoView({ behavior: 'instant', block: 'center' });
                     }
-                    if (!cfg.isDryRun) {
+                    if (!cfg.isDryRun && !wlScanner.willStopPick) {
                         row.info.button.click();
                     }
                 }
@@ -162,82 +170,96 @@
             this.info.note = "";
         }
 
-        function scanRowTypes() {
+        /* Class RowTypeScanner: constructor */
+        function RowTypeScanner() {
+            this.rowsStartOfNewType = [];
+            this.timeGaps = [];
+
+            const rowNodes = document.querySelectorAll(cfg.dom.tableRows);
+            let isLastRowPushed = false;
             let prevRow = { /* Dummy row to compare the next row against */
                 sTimeSlot:          cfg.sScanTimeMin,
                 minutesTimeSlot:    cfg.minutesScanMin,
-                info: {
-                    type:           "DummyType",
-                    note:           ""
-                }
+                info:               {type: "DummyType", note: ""}
             };
-            const rowTypes = [];
-            const timeGaps = [];
-            const rowNodes = document.querySelectorAll(cfg.dom.tableRows);
-            let isLastRowPushed = false;
             for (const rowNode of rowNodes) {
                 const row = new ScanRow(rowNode);
                 if (row.minutesTimeSlot < cfg.minutesScanMin) {
                     continue;
                 }
                 if (row.info.type != prevRow.info.type) {
-                    rowTypes.push(row);
+                    this.rowsStartOfNewType.push(row);
                 }
                 if (row.minutesTimeSlot > (prevRow.minutesTimeSlot + cfg.minutesIntervalWarn) &&
                     prevRow.info.type != "DummyType" ) {
-                    timeGaps.push( [prevRow, row] );
+                    this.timeGaps.push( [prevRow, row] );
                 }
                 if (row.minutesTimeSlot > cfg.minutesScanMax) {
                     row.info.note = "Next row past scan-time-max";
-                    rowTypes.push(row);
+                    this.rowsStartOfNewType.push(row);
                     isLastRowPushed = true;
                     break;
                 }
                 prevRow = row;
             }
-            if (!isLastRowPushed && rowTypes.length > 0 && prevRow !== rowTypes[-1]) {
+            if (!isLastRowPushed && this.rowsStartOfNewType.length > 0 && prevRow !== this.rowsStartOfNewType[-1]) {
                     prevRow.info.note = "Last row";
-                    rowTypes.push(prevRow);
+                    this.rowsStartOfNewType.push(prevRow);
             }
-            showScanResults(rowTypes, timeGaps);
         }
 
-        function showScanResults(rowTypes, timeGaps) {
+        /* Class RowTypeScanner: instance method */
+        RowTypeScanner.prototype.showRowTypes =  function () {
             monolog("START OF EACH TYPE:");
             const hints = new DefaultDict(cfg.hintsByType, cfg.defaultHint);
-            for (const row of rowTypes) {
+            for (const row of this.rowsStartOfNewType) {
                 const hint = hints.get(row.info.type);
                 monolog(`|${row.sTimeSlot} (${row.minutesTimeSlot})|${row.info.type}|${hint}|${row.info.note}`);
             }
-            if (timeGaps.length > 0) {
-                monolog("TIME GAPS BETWEEN ROWS:");
-                for (const rows of timeGaps) {
+        }
+
+        /* Class RowTypeScanner: instance method */
+        RowTypeScanner.prototype.showRowGaps =  function () {
+            if (this.timeGaps.length > 0) {
+                for (const rows of this.timeGaps) {
                     const [prev, row] = rows;
                     const minutesGap = row.minutesTimeSlot - prev.minutesTimeSlot;
                     monolog(`|GAP: ${minutesGap} minutes|${prev.sTimeSlot} (${prev.info.type})|` +
                         `${row.sTimeSlot} (${row.info.type})`);
                 }
             }
-            showLabelWarning();
         }
 
-        function showLabelWarning() {
-            if (cfg.labelsToBeware.length == 0) {
+        /* Class WatchListScanner: constructor */
+        function WatchListScanner() {
+            this.willStopPick = false;
+            this.labelsFound = [];
+            if (cfg.watchList.length == 0) {
                 return;
             }
-            const objLabelsTB = cfg.labelsToBeware.map(lbl => ({
-                label:  lbl,
-                re:     new RegExp('^' + lbl + '\\s.*')
-            }));
+            const watchListRE = cfg.watchList.map(wObj => {
+                wObj.re = new RegExp('^' + wObj.label + '\\s.*');
+                return wObj;
+            });
             const domLabelNodes = document.querySelectorAll(cfg.dom.rowLabel);
-            /* monolog(`Number of labels: ${domLabelNodes.length}`); */
             for (const labelNode of domLabelNodes) {
                 const nodeText = labelNode.textContent.trim();
-                for (const ol of objLabelsTB) {
-                    if (ol.re.test( nodeText )) {
-                        monolog(`BEWARE: '${ol.label}' found!`);
+                for (const wObj of watchListRE) {
+                    if (wObj.re.test( nodeText )) {
+                        this.labelsFound.push(wObj.label);
+                        this.willStopPick = wObj.willStopPick || this.willStopPick;
                     }
                 }
+            }
+        }
+
+        /* Class WatchListScanner: instance method */
+        WatchListScanner.prototype.showWarnings = function () {
+            for (const lbl of this.labelsFound) {
+                monolog(`|WATCH LIST|'${lbl}' found!`);
+            }
+            if (this.willStopPick) {
+                monolog(`|WATCH LIST|*** WARNING: Will prevent picking! ***`);
             }
         }
 
@@ -256,13 +278,19 @@
         };
 
         /* Main */
-        monolog("START");
         const sectionBreak = '='.repeat(30);
+        monolog("START");
         monolog(`Config: ${JSON.stringify(cfg, null, 2)}`);
-        scanRowTypes();
+        const rtScanner = new RowTypeScanner();
+        rtScanner.showRowTypes();
 
         monolog(sectionBreak);
-        pickRow();
+        rtScanner.showRowGaps();
+        const wlScanner = new WatchListScanner();
+        wlScanner.showWarnings();
+
+        monolog(sectionBreak);
+        pickRow(wlScanner);
         monolog("END");
 
 

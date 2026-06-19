@@ -73,49 +73,6 @@
             console.log(`${cfg.logLabel}(${msElapsed}ms) ${msg}`);
         }
 
-        /* Class Row: constructor */
-        function Row(rowNode) {
-            this.sTimeSlot = rowNode.querySelector(cfg.dom.rowTime).textContent.trim();
-            this.minutesTimeSlot = convertTimeToMinutes(this.sTimeSlot);
-
-            if (this.minutesTimeSlot >= cfg.minutesMin && this.minutesTimeSlot <= cfg.minutesMax) {
-                this.info = {};
-                const tokens = Array.from(rowNode.classList).filter(tok => tok.match(cfg.dom.rowTypeRegex));
-                this.info.type = tokens.join();
-
-                this.info.numFreePlaces = rowNode.querySelectorAll(cfg.dom.rowFreePlaces).length;
-                this.info.hasLock = rowNode.querySelector(cfg.dom.rowLock).textContent.trim().length != 0;
-
-                const okFreePlaces = this.info.numFreePlaces >= cfg.freePlacesMin;
-                const okType = cfg.okTypes.includes(this.info.type);
-                this.info.willPick = okFreePlaces && okType && !this.info.hasLock;
-                this.info.button = rowNode.querySelector(cfg.dom.rowPickBtn);
-
-            } else {
-                this.info = null;
-            }
-        }
-
-        /* Class Row: instance method */
-        Row.prototype.isShowRow = function () {
-            return cfg.isShow0FreePlaces || this.info.numFreePlaces >= cfg.freePlacesMin;
-        };
-
-        /* Class Row: instance method */
-        Row.prototype.show = function (wasPicked) {
-            if (!this.info) {
-                monolog(`${this.sTimeSlot} (${this.minutesTimeSlot})|*** row.info is NULL`);
-                return;
-            }
-            const sLocked = this.info.hasLock ? "Lock" : "";
-            const sPick = (this.info.willPick && !wasPicked) ? `PICK: ${this.info.button.id}` : "";
-            const sPickDryRun = sPick != "" && cfg.isDryRun ? `[${sPick.toLowerCase()}]` : sPick;
-
-            if (this.isShowRow()) {
-                monolog(`|${this.sTimeSlot} (${this.minutesTimeSlot})|numFree: ${this.info.numFreePlaces}|${this.info.type}|${sLocked}|${sPickDryRun}`);
-            }
-        };
-
         function convertTimeToMinutes(timeStr) {
             /* timeStr "08:10 pm" returns 1210 (minutes) */
             const [time, amPm] = timeStr.split(' ');
@@ -158,6 +115,49 @@
                 wasPicked = row.info.willPick || wasPicked;
             }
         }
+
+        /* Class Row: constructor */
+        function Row(rowNode) {
+            this.sTimeSlot = rowNode.querySelector(cfg.dom.rowTime).textContent.trim();
+            this.minutesTimeSlot = convertTimeToMinutes(this.sTimeSlot);
+
+            if (this.minutesTimeSlot >= cfg.minutesMin && this.minutesTimeSlot <= cfg.minutesMax) {
+                this.info = {};
+                const tokens = Array.from(rowNode.classList).filter(tok => tok.match(cfg.dom.rowTypeRegex));
+                this.info.type = tokens.join();
+
+                this.info.numFreePlaces = rowNode.querySelectorAll(cfg.dom.rowFreePlaces).length;
+                this.info.hasLock = rowNode.querySelector(cfg.dom.rowLock).textContent.trim().length != 0;
+
+                const okFreePlaces = this.info.numFreePlaces >= cfg.freePlacesMin;
+                const okType = cfg.okTypes.includes(this.info.type);
+                this.info.willPick = okFreePlaces && okType && !this.info.hasLock;
+                this.info.button = rowNode.querySelector(cfg.dom.rowPickBtn);
+
+            } else {
+                this.info = null;
+            }
+        }
+
+        /* Class Row: instance method */
+        Row.prototype.isShowRow = function () {
+            return cfg.isShow0FreePlaces || this.info.numFreePlaces >= cfg.freePlacesMin;
+        };
+
+        /* Class Row: instance method */
+        Row.prototype.show = function (wasPicked) {
+            if (!this.info) {
+                monolog(`${this.sTimeSlot} (${this.minutesTimeSlot})|*** row.info is NULL`);
+                return;
+            }
+            const sLocked = this.info.hasLock ? "Lock" : "";
+            const sPick = (this.info.willPick && !wasPicked) ? `PICK: ${this.info.button.id}` : "";
+            const sPickDryRun = sPick != "" && cfg.isDryRun ? `[${sPick.toLowerCase()}]` : sPick;
+
+            if (this.isShowRow()) {
+                monolog(`|${this.sTimeSlot} (${this.minutesTimeSlot})|numFree: ${this.info.numFreePlaces}|${this.info.type}|${sLocked}|${sPickDryRun}`);
+            }
+        };
 
         /* Class ScanRow: constructor */
         function ScanRow(rowNode) {
